@@ -1,0 +1,26 @@
+{
+  "name": "hivemind-mcp",
+  "version": "0.1.0",
+  "description": "Real-time coordination layer for multiple Claude Code instances — shared memory, messaging, and task board over Redis",
+  "type": "module",
+  "bin": {
+    "hivemind": "./bin/hivemind.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "hive": "tsx bin/hivemind.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.1",
+    "ioredis": "^5.6.1",
+    "nanoid": "^5.1.5",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
