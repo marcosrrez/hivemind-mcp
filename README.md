@@ -1,6 +1,6 @@
 # hivemind-mcp
 
-Real-time coordination layer for multiple Claude Code instances running on the same machine.
+Real-time coordination layer for multiple Claude Code instances — on one machine or across all your devices.
 
 hivemind gives independently-launched Claude agents a shared nervous system: they can discover each other, exchange messages, store shared context, and coordinate work on a task board — all backed by Redis pub/sub for instant delivery.
 
@@ -44,6 +44,41 @@ claude mcp add --scope user hivemind-mcp -- bunx tsx /path/to/hivemind-mcp/src/s
 ```
 
 Redis must be running locally or reachable via `HIVEMIND_REDIS_URL`.
+
+---
+
+## Multi-Machine Setup
+
+hivemind works across all your devices as long as they share a Redis instance. The recommended approach is a self-hosted Redis server accessible via [Tailscale](https://tailscale.com).
+
+**Architecture:**
+```
+[Laptop] ──┐
+[Phone]  ──┼── Tailscale ──► Redis (home server) ◄── hivemind hub
+[Desktop]──┘
+```
+
+**On each machine, point hivemind at your shared Redis:**
+
+```bash
+claude mcp add --scope user hivemind-mcp \
+  -e HIVEMIND_REDIS_URL=redis://<your-tailscale-ip>:6379 \
+  -e HIVEMIND_REDIS_PASSWORD=<your-redis-password> \
+  -- bunx tsx /path/to/hivemind-mcp/src/server.ts
+```
+
+**Requirements for multi-machine:**
+- Redis must be reachable on port `6379` from all devices (via Tailscale or VPN)
+- All devices must be on the same Tailscale network (or equivalent)
+- Redis should have a strong password (`requirepass` in redis.conf or Docker)
+
+**Firewall tip:** Only expose Redis on the Tailscale interface, not the public internet:
+```bash
+# UFW example — allow Redis only from Tailscale
+ufw allow in on tailscale0 to any port 6379 proto tcp
+```
+
+Once configured, Claude instances on any device call `hive_join()` and they're all in the same hive.
 
 ---
 
