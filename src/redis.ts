@@ -35,5 +35,5 @@ export const KEYS = {
   taskQueue: (): string => "hivemind:task_queue",
 };
 
-export const AGENT_TTL = 45;
-export const MESSAGE_TTL = 86400;
+export const AGENT_TTL = parseInt(process.env.HIVEMIND_AGENT_TTL ?? "45", 10);
+export const MESSAGE_TTL = parseInt(process.env.HIVEMIND_MESSAGE_TTL ?? "86400", 10);

@@ -11,9 +11,11 @@ import { Registry } from "./registry.js";
 import { Messenger } from "./messaging.js";
 import { ContextStore } from "./context.js";
 import { TaskBoard } from "./tasks.js";
+import { assignName } from "./names.js";
 
 const REDIS_URL = process.env.HIVEMIND_REDIS_URL ?? "redis://localhost:6379";
 const REDIS_PASSWORD = process.env.HIVEMIND_REDIS_PASSWORD;
+const HEARTBEAT_MS = parseInt(process.env.HIVEMIND_HEARTBEAT_MS ?? "20000", 10);
 
 const redisUrl = REDIS_PASSWORD
   ? REDIS_URL.replace("redis://", `redis://:${REDIS_PASSWORD}@`)
@@ -178,6 +180,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description:
               "Namespace to organize context (e.g. 'decisions', 'findings', 'blockers', 'architecture'). Defaults to 'general'.",
           },
+          ttl: {
+            type: "number",
+            description: "Optional TTL in seconds. If omitted, the entry persists indefinitely.",
+          },
         },
         required: ["key", "value"],
       },
@@ -258,6 +264,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "hive_inbox_clear",
+      description: "Clear all messages from your inbox.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
       name: "hive_tasks",
       description: "List tasks on the shared board.",
       inputSchema: {
@@ -282,33 +293,44 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "hive_join": {
         const parsed = z
           .object({
-            name: z.string(),
+            name: z.string().optional(),
             role: z.string().optional(),
             workdir: z.string().optional(),
           })
-          .parse(args);
+          .parse(args ?? {});
 
         if (sessionAgentId) {
           await registry.deregister(sessionAgentId);
           if (heartbeatInterval) clearInterval(heartbeatInterval);
         }
 
+        // Auto-assign name + personality if not provided
+        const { name: autoName, personality } = assignName();
+        const resolvedName = parsed.name ?? autoName;
+
         sessionAgentId = nanoid(10);
-        sessionAgentName = parsed.name;
+        sessionAgentName = resolvedName;
 
         const agent = await registry.register(
           sessionAgentId,
-          parsed.name,
+          resolvedName,
           parsed.role,
-          parsed.workdir ?? process.cwd()
+          parsed.workdir ?? process.cwd(),
+          personality
         );
 
-        // Start heartbeat
+        // Start heartbeat — also triggers lazy stale-agent cleanup via list()
+        let heartbeatTick = 0;
         heartbeatInterval = setInterval(async () => {
           if (sessionAgentId) {
             await registry.heartbeat(sessionAgentId).catch(() => {});
           }
-        }, 20_000);
+          // Every 5 ticks (~100s by default) proactively clean up stale agents
+          heartbeatTick++;
+          if (heartbeatTick % 5 === 0) {
+            await registry.list().catch(() => {});
+          }
+        }, HEARTBEAT_MS);
 
         const others = (await registry.list()).filter(
           (a) => a.id !== sessionAgentId
@@ -323,10 +345,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
                   joined: true,
                   agent_id: agent.id,
                   name: agent.name,
+                  personality: agent.personality,
                   active_agents: others.length,
                   others: others.map((a) => ({
                     id: a.id,
                     name: a.name,
+                    personality: a.personality,
                     role: a.role,
                     workdir: a.workdir,
                   })),
@@ -484,6 +508,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
 
+      case "hive_inbox_clear": {
+        const { id } = requireJoined();
+        await messenger.clearInbox(id);
+        return { content: [{ type: "text", text: "Inbox cleared." }] };
+      }
+
       case "hive_channel": {
         requireJoined();
         const parsed = z
@@ -519,6 +549,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             key: z.string(),
             value: z.string(),
             namespace: z.string().optional(),
+            ttl: z.number().positive().optional(),
           })
           .parse(args);
         await context.set(
@@ -526,13 +557,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           parsed.key,
           parsed.value,
           id,
-          agentName
+          agentName,
+          parsed.ttl
         );
+        const ttlNote = parsed.ttl ? ` (expires in ${parsed.ttl}s)` : "";
         return {
           content: [
             {
               type: "text",
-              text: `Stored "${parsed.key}" in namespace "${parsed.namespace ?? "general"}".`,
+              text: `Stored "${parsed.key}" in namespace "${parsed.namespace ?? "general"}"${ttlNote}.`,
             },
           ],
         };
@@ -745,12 +778,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 });
 
 async function main() {
-  await redis.connect().catch(() => {
-    // lazyConnect — connect errors surface on first use
-  });
-
+  // Connect to MCP transport first so tools are available immediately
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Connect Redis in background — tool calls will wait if Redis isn't ready yet
+  redis.connect().catch(() => {});
 
   process.on("SIGINT", async () => {
     if (sessionAgentId) {

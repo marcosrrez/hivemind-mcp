@@ -10,7 +10,8 @@ export class ContextStore {
     key: string,
     value: string,
     agentId: string,
-    agentName: string
+    agentName: string,
+    ttl?: number
   ): Promise<void> {
     const entry: ContextEntry = {
       key,
@@ -21,7 +22,11 @@ export class ContextStore {
     };
 
     const pipeline = this.redis.pipeline();
-    pipeline.set(KEYS.context(namespace, key), JSON.stringify(entry));
+    if (ttl && ttl > 0) {
+      pipeline.set(KEYS.context(namespace, key), JSON.stringify(entry), "EX", ttl);
+    } else {
+      pipeline.set(KEYS.context(namespace, key), JSON.stringify(entry));
+    }
     pipeline.sadd(KEYS.contextIndex(namespace), key);
     await pipeline.exec();
   }

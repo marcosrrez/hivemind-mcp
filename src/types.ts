@@ -3,6 +3,7 @@ export interface Agent {
   name: string;
   role?: string;
   workdir?: string;
+  personality?: string;
   joinedAt: number;
   lastSeen: number;
 }

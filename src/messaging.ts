@@ -14,17 +14,25 @@ export class Messenger {
     };
 
     const payload = JSON.stringify(full);
+    const pipeline = this.redis.pipeline();
 
     if (msg.channel) {
       const channelKey = KEYS.channel(msg.channel);
-      await this.redis.lpush(channelKey, payload);
-      await this.redis.expire(channelKey, MESSAGE_TTL);
+      pipeline.lpush(channelKey, payload);
+      pipeline.expire(channelKey, MESSAGE_TTL);
     } else {
       const inboxKey = KEYS.inbox(msg.to as string);
-      await this.redis.lpush(inboxKey, payload);
-      await this.redis.expire(inboxKey, MESSAGE_TTL);
+      pipeline.lpush(inboxKey, payload);
+      pipeline.expire(inboxKey, MESSAGE_TTL);
     }
 
+    // All messages also go to the global feed for dashboard visibility
+    const globalKey = KEYS.channel("_all");
+    pipeline.lpush(globalKey, payload);
+    pipeline.ltrim(globalKey, 0, 199); // keep last 200
+    pipeline.expire(globalKey, MESSAGE_TTL);
+
+    await pipeline.exec();
     return full;
   }
 
@@ -52,6 +60,11 @@ export class Messenger {
     const broadcastKey = KEYS.channel("broadcast");
     pipeline.lpush(broadcastKey, payload);
     pipeline.expire(broadcastKey, MESSAGE_TTL);
+
+    const globalKey = KEYS.channel("_all");
+    pipeline.lpush(globalKey, payload);
+    pipeline.ltrim(globalKey, 0, 199);
+    pipeline.expire(globalKey, MESSAGE_TTL);
 
     await pipeline.exec();
 

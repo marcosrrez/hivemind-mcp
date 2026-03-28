@@ -13,7 +13,8 @@ export class Registry {
     id: string,
     name: string,
     role?: string,
-    workdir?: string
+    workdir?: string,
+    personality?: string
   ): Promise<Agent> {
     const now = Date.now();
     const agent: Agent = {
@@ -21,14 +22,15 @@ export class Registry {
       name,
       ...(role !== undefined && { role }),
       ...(workdir !== undefined && { workdir }),
+      ...(personality !== undefined && { personality }),
       joinedAt: now,
       lastSeen: now,
     };
 
-    await Promise.all([
-      this.redis.hset(KEYS.agents(), id, JSON.stringify(agent)),
-      this.redis.set(KEYS.heartbeat(id), "1", "EX", AGENT_TTL),
-    ]);
+    const pipeline = this.redis.pipeline();
+    pipeline.hset(KEYS.agents(), id, JSON.stringify(agent));
+    pipeline.set(KEYS.heartbeat(id), "1", "EX", AGENT_TTL);
+    await pipeline.exec();
 
     return agent;
   }
